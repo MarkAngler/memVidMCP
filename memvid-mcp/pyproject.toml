@@ -1,0 +1,22 @@
+[project]
+name = "memvid-mcp"
+version = "0.1.0"
+description = "MCP server for memVid video-based memory storage"
+readme = "README.md"
+authors = [
+    { name = "Mark", email = "mark.angler@outlook.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=0.1.0",
+    "memvid>=0.1.0",
+    "numpy>=1.19.0",
+    "sentence-transformers>=2.0.0",
+]
+
+[project.scripts]
+memvid-mcp = "memvid_mcp:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
