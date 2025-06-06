@@ -33,11 +33,12 @@ def get_memory_paths(user_id: str) -> tuple[str, str]:
 def get_or_create_encoder(user_id: str) -> MemvidEncoder:
     """Get or create encoder for user"""
     if user_id not in encoders:
-        encoders[user_id] = MemvidEncoder(
-            chunk_size=512,
-            overlap=50,
-            model_name='all-MiniLM-L6-v2'
-        )
+        config = {
+            'chunk_size': 512,
+            'overlap': 50,
+            'model_name': 'all-MiniLM-L6-v2'
+        }
+        encoders[user_id] = MemvidEncoder(config=config)
     return encoders[user_id]
 
 
@@ -101,12 +102,12 @@ async def store_memory(
         user_metadata["memories"].append(memory_entry)
         
         # Encode all memories to video
-        all_content = [m["content"] for m in user_metadata["memories"]]
-        video_path, index_path = get_memory_paths(user_id)
+        encoder.clear()  # Clear any existing data
+        for memory in user_metadata["memories"]:
+            encoder.add_text(memory["content"])
         
-        encoder.fit(all_content)
-        encoder.encode_to_video(video_path)
-        encoder.create_index(index_path)
+        video_path, index_path = get_memory_paths(user_id)
+        encoder.build_video(video_path, index_path)
         
         # Save updated metadata
         save_memory_metadata(user_id, user_metadata)
@@ -150,24 +151,28 @@ async def search_memories(
         user_metadata = load_memory_metadata(user_id)
         memories = []
         
-        for idx, score in results:
-            if idx < len(user_metadata["memories"]):
-                memory = user_metadata["memories"][idx]
-                
-                # Filter by memory type if specified
-                if memory_type and memory.get("memory_type") != memory_type:
-                    continue
-                
-                memories.append({
-                    "content": memory["content"],
-                    "relevance_score": float(score),
-                    "timestamp": memory["timestamp"],
-                    "memory_type": memory.get("memory_type", "general"),
-                    "metadata": memory.get("metadata", {})
-                })
-                
-                if len(memories) >= top_k:
-                    break
+        # Results are returned as list of text strings
+        for result_text in results:
+            # Find matching memory in metadata
+            for memory in user_metadata["memories"]:
+                if memory["content"] == result_text:
+                    # Filter by memory type if specified
+                    if memory_type and memory.get("memory_type") != memory_type:
+                        continue
+                    
+                    memories.append({
+                        "content": memory["content"],
+                        "relevance_score": 1.0,  # Memvid doesn't return scores
+                        "timestamp": memory["timestamp"],
+                        "memory_type": memory.get("memory_type", "general"),
+                        "metadata": memory.get("metadata", {})
+                    })
+                    
+                    if len(memories) >= top_k:
+                        break
+            
+            if len(memories) >= top_k:
+                break
         
         return {"memories": memories}
     except Exception as e:
@@ -324,9 +329,10 @@ async def consolidate_memories(
             all_content = [m["content"] for m in user_metadata["memories"]]
             video_path, index_path = get_memory_paths(user_id)
             
-            encoder.fit(all_content)
-            encoder.encode_to_video(video_path)
-            encoder.create_index(index_path)
+            encoder.clear()
+            for memory in user_metadata["memories"]:
+                encoder.add_text(memory["content"])
+            encoder.build_video(video_path, index_path)
             
             # Update retriever
             retrievers[user_id] = MemvidRetriever(video_path, index_path)
