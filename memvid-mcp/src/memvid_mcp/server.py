@@ -1,9 +1,8 @@
 """memVid MCP Server - Main server implementation"""
 
-import asyncio
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -19,6 +18,7 @@ retrievers: Dict[str, MemvidRetriever] = {}
 
 # Configuration
 MEMORY_PATH = os.getenv("MEMORY_PATH", "./memories")
+DEFAULT_USER_ID = os.getenv("USER_ID", None)
 Path(MEMORY_PATH).mkdir(exist_ok=True)
 
 
@@ -75,13 +75,19 @@ def save_memory_metadata(user_id: str, metadata: Dict) -> None:
 @mcp.tool()
 async def store_memory(
     content: str,
-    user_id: str,
+    user_id: Optional[str] = None,
     memory_type: str = "general",
     metadata: Optional[Dict] = None,
     ctx: Context = None
 ) -> Dict:
     """Store a new memory for the user"""
     try:
+        # Use default user_id if not provided
+        if user_id is None:
+            if DEFAULT_USER_ID is None:
+                return {"success": False, "error": "No user_id provided and no default USER_ID set"}
+            user_id = DEFAULT_USER_ID
+        
         if ctx:
             ctx.info(f"Storing memory for user {user_id}")
         
@@ -89,7 +95,7 @@ async def store_memory(
         encoder = get_or_create_encoder(user_id)
         
         # Prepare memory with metadata
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(timezone.utc).isoformat()
         memory_entry = {
             "content": content,
             "timestamp": timestamp,
@@ -129,13 +135,24 @@ async def store_memory(
 @mcp.tool()
 async def search_memories(
     query: str,
-    user_id: str,
+    user_id: Optional[str] = None,
     top_k: int = 5,
     memory_type: Optional[str] = None,
     ctx: Context = None
 ) -> List[Dict]:
-    """Search user memories using semantic search"""
+    """Search user memories using semantic search
+    
+    Tips for better results:
+    - Use keywords that might appear in the memory content
+    - The search matches content, not intent
+    """
     try:
+        # Use default user_id if not provided
+        if user_id is None:
+            if DEFAULT_USER_ID is None:
+                return {"memories": []}
+            user_id = DEFAULT_USER_ID
+        
         if ctx:
             ctx.info(f"Searching memories for user {user_id}")
         
@@ -184,13 +201,23 @@ async def search_memories(
 @mcp.tool()
 async def store_conversation(
     messages: List[Dict[str, str]], 
-    user_id: str,
-    session_id: str,
+    user_id: Optional[str] = None,
+    session_id: str = None,
     metadata: Optional[Dict] = None,
     ctx: Context = None
 ) -> Dict:
     """Store a conversation in video memory"""
     try:
+        # Use default user_id if not provided
+        if user_id is None:
+            if DEFAULT_USER_ID is None:
+                return {"success": False, "error": "No user_id provided and no default USER_ID set"}
+            user_id = DEFAULT_USER_ID
+        
+        # Generate session_id if not provided
+        if session_id is None:
+            session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        
         if ctx:
             ctx.info(f"Storing conversation for user {user_id}, session {session_id}")
         
@@ -222,13 +249,25 @@ async def store_conversation(
 
 @mcp.tool()
 async def get_memory_context(
-    user_id: str,
+    user_id: Optional[str] = None,
     max_tokens: int = 2000,
     query: Optional[str] = None,
     ctx: Context = None
 ) -> str:
-    """Get contextual memory summary for user"""
+    """Get contextual memory summary for user
+    
+    Returns a formatted text summary of memories. If query is provided,
+    searches for relevant memories. Otherwise returns recent memories.
+    
+    For structured memory data, use search_memories instead.
+    """
     try:
+        # Use default user_id if not provided
+        if user_id is None:
+            if DEFAULT_USER_ID is None:
+                return ""
+            user_id = DEFAULT_USER_ID
+        
         if ctx:
             ctx.info(f"Getting memory context for user {user_id}")
         
@@ -277,12 +316,18 @@ async def get_memory_context(
 
 @mcp.tool()
 async def consolidate_memories(
-    user_id: str,
+    user_id: Optional[str] = None,
     strategy: str = "deduplicate",
     ctx: Context = None
 ) -> Dict:
     """Consolidate and optimize user memories"""
     try:
+        # Use default user_id if not provided
+        if user_id is None:
+            if DEFAULT_USER_ID is None:
+                return {"success": False, "error": "No user_id provided and no default USER_ID set"}
+            user_id = DEFAULT_USER_ID
+        
         if ctx:
             ctx.info(f"Consolidating memories for user {user_id} with strategy {strategy}")
         
@@ -326,7 +371,6 @@ async def consolidate_memories(
         # Re-encode memories
         if user_metadata["memories"]:
             encoder = get_or_create_encoder(user_id)
-            all_content = [m["content"] for m in user_metadata["memories"]]
             video_path, index_path = get_memory_paths(user_id)
             
             encoder.clear()
