@@ -163,3 +163,4 @@ memvid-mcp/config/claude_desktop_config.json
 memvid-mcp-prd-optimized.md
 CLAUDE.md
 .mcp.json
+.roo/mcp.json

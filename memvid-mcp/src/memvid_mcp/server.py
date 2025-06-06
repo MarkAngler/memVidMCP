@@ -415,7 +415,7 @@ def main():
     
     # Run the server
     try:
-        asyncio.run(mcp.run())
+        mcp.run()
     except KeyboardInterrupt:
         print("\nShutting down memVid MCP server...")
         sys.exit(0)
