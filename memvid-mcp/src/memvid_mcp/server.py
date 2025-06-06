@@ -12,51 +12,52 @@ from memvid import MemvidEncoder, MemvidRetriever
 # Initialize FastMCP server
 mcp = FastMCP("memVid Memory Server")
 
-# User-specific managers
-encoders: Dict[str, MemvidEncoder] = {}
-retrievers: Dict[str, MemvidRetriever] = {}
+# Memory managers
+encoder: Optional[MemvidEncoder] = None
+retriever: Optional[MemvidRetriever] = None
 
 # Configuration
 MEMORY_PATH = os.getenv("MEMORY_PATH", "./memories")
-DEFAULT_USER_ID = os.getenv("USER_ID", None)
 Path(MEMORY_PATH).mkdir(exist_ok=True)
 
 
-def get_memory_paths(user_id: str) -> tuple[str, str]:
-    """Get video and index paths for a user"""
+def get_memory_paths() -> tuple[str, str]:
+    """Get video and index paths"""
     return (
-        f"{MEMORY_PATH}/{user_id}.mp4",
-        f"{MEMORY_PATH}/{user_id}_index.json"
+        f"{MEMORY_PATH}/memories.mp4",
+        f"{MEMORY_PATH}/memories_index.json"
     )
 
 
-def get_or_create_encoder(user_id: str) -> MemvidEncoder:
-    """Get or create encoder for user"""
-    if user_id not in encoders:
+def get_or_create_encoder() -> MemvidEncoder:
+    """Get or create encoder"""
+    global encoder
+    if encoder is None:
         config = {
             'chunk_size': 512,
             'overlap': 50,
             'model_name': 'all-MiniLM-L6-v2'
         }
-        encoders[user_id] = MemvidEncoder(config=config)
-    return encoders[user_id]
+        encoder = MemvidEncoder(config=config)
+    return encoder
 
 
-def get_or_create_retriever(user_id: str) -> Optional[MemvidRetriever]:
-    """Get or create retriever for user"""
-    if user_id not in retrievers:
-        video_path, index_path = get_memory_paths(user_id)
+def get_or_create_retriever() -> Optional[MemvidRetriever]:
+    """Get or create retriever"""
+    global retriever
+    if retriever is None:
+        video_path, index_path = get_memory_paths()
         try:
-            retrievers[user_id] = MemvidRetriever(video_path, index_path)
+            retriever = MemvidRetriever(video_path, index_path)
         except:
             return None
-    return retrievers[user_id]
+    return retriever
 
 
-def load_memory_metadata(user_id: str) -> Dict:
-    """Load metadata for user memories"""
+def load_memory_metadata() -> Dict:
+    """Load metadata for memories"""
     try:
-        metadata_path = f"{MEMORY_PATH}/{user_id}_metadata.json"
+        metadata_path = f"{MEMORY_PATH}/metadata.json"
         if os.path.exists(metadata_path):
             with open(metadata_path, 'r') as f:
                 return json.load(f)
@@ -65,9 +66,9 @@ def load_memory_metadata(user_id: str) -> Dict:
     return {"memories": []}
 
 
-def save_memory_metadata(user_id: str, metadata: Dict) -> None:
-    """Save metadata for user memories"""
-    metadata_path = f"{MEMORY_PATH}/{user_id}_metadata.json"
+def save_memory_metadata(metadata: Dict) -> None:
+    """Save metadata for memories"""
+    metadata_path = f"{MEMORY_PATH}/metadata.json"
     with open(metadata_path, 'w') as f:
         json.dump(metadata, f, indent=2)
 
@@ -75,24 +76,17 @@ def save_memory_metadata(user_id: str, metadata: Dict) -> None:
 @mcp.tool()
 async def store_memory(
     content: str,
-    user_id: Optional[str] = None,
     memory_type: str = "general",
     metadata: Optional[Dict] = None,
     ctx: Context = None
 ) -> Dict:
-    """Store a new memory for the user"""
+    """Store a new memory"""
     try:
-        # Use default user_id if not provided
-        if user_id is None:
-            if DEFAULT_USER_ID is None:
-                return {"success": False, "error": "No user_id provided and no default USER_ID set"}
-            user_id = DEFAULT_USER_ID
-        
         if ctx:
-            ctx.info(f"Storing memory for user {user_id}")
+            ctx.info("Storing memory")
         
         # Get or create encoder
-        encoder = get_or_create_encoder(user_id)
+        encoder = get_or_create_encoder()
         
         # Prepare memory with metadata
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -104,26 +98,27 @@ async def store_memory(
         }
         
         # Load existing metadata
-        user_metadata = load_memory_metadata(user_id)
-        user_metadata["memories"].append(memory_entry)
+        metadata_obj = load_memory_metadata()
+        metadata_obj["memories"].append(memory_entry)
         
         # Encode all memories to video
         encoder.clear()  # Clear any existing data
-        for memory in user_metadata["memories"]:
+        for memory in metadata_obj["memories"]:
             encoder.add_text(memory["content"])
         
-        video_path, index_path = get_memory_paths(user_id)
+        video_path, index_path = get_memory_paths()
         encoder.build_video(video_path, index_path)
         
         # Save updated metadata
-        save_memory_metadata(user_id, user_metadata)
+        save_memory_metadata(metadata_obj)
         
         # Update retriever
-        retrievers[user_id] = MemvidRetriever(video_path, index_path)
+        global retriever
+        retriever = MemvidRetriever(video_path, index_path)
         
         return {
             "success": True,
-            "memory_id": len(user_metadata["memories"]) - 1,
+            "memory_id": len(metadata_obj["memories"]) - 1,
             "timestamp": timestamp
         }
     except Exception as e:
@@ -135,29 +130,22 @@ async def store_memory(
 @mcp.tool()
 async def search_memories(
     query: str,
-    user_id: Optional[str] = None,
     top_k: int = 5,
     memory_type: Optional[str] = None,
     ctx: Context = None
 ) -> List[Dict]:
-    """Search user memories using semantic search
+    """Search memories using semantic search
     
     Tips for better results:
     - Use keywords that might appear in the memory content
     - The search matches content, not intent
     """
     try:
-        # Use default user_id if not provided
-        if user_id is None:
-            if DEFAULT_USER_ID is None:
-                return {"memories": []}
-            user_id = DEFAULT_USER_ID
-        
         if ctx:
-            ctx.info(f"Searching memories for user {user_id}")
+            ctx.info("Searching memories")
         
         # Get retriever
-        retriever = get_or_create_retriever(user_id)
+        retriever = get_or_create_retriever()
         if not retriever:
             return {"memories": []}
         
@@ -165,13 +153,13 @@ async def search_memories(
         results = retriever.search(query, top_k=top_k * 2)  # Get extra to filter
         
         # Load metadata to match results with full memory info
-        user_metadata = load_memory_metadata(user_id)
+        metadata_obj = load_memory_metadata()
         memories = []
         
         # Results are returned as list of text strings
         for result_text in results:
             # Find matching memory in metadata
-            for memory in user_metadata["memories"]:
+            for memory in metadata_obj["memories"]:
                 if memory["content"] == result_text:
                     # Filter by memory type if specified
                     if memory_type and memory.get("memory_type") != memory_type:
@@ -201,25 +189,18 @@ async def search_memories(
 @mcp.tool()
 async def store_conversation(
     messages: List[Dict[str, str]], 
-    user_id: Optional[str] = None,
     session_id: str = None,
     metadata: Optional[Dict] = None,
     ctx: Context = None
 ) -> Dict:
     """Store a conversation in video memory"""
     try:
-        # Use default user_id if not provided
-        if user_id is None:
-            if DEFAULT_USER_ID is None:
-                return {"success": False, "error": "No user_id provided and no default USER_ID set"}
-            user_id = DEFAULT_USER_ID
-        
         # Generate session_id if not provided
         if session_id is None:
             session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         
         if ctx:
-            ctx.info(f"Storing conversation for user {user_id}, session {session_id}")
+            ctx.info(f"Storing conversation, session {session_id}")
         
         # Format conversation as a single memory
         conversation_text = "\n".join([
@@ -236,7 +217,6 @@ async def store_conversation(
         
         return await store_memory(
             content=conversation_text,
-            user_id=user_id,
             memory_type="conversation",
             metadata=conv_metadata,
             ctx=ctx
@@ -249,12 +229,11 @@ async def store_conversation(
 
 @mcp.tool()
 async def get_memory_context(
-    user_id: Optional[str] = None,
     max_tokens: int = 2000,
     query: Optional[str] = None,
     ctx: Context = None
 ) -> str:
-    """Get contextual memory summary for user
+    """Get contextual memory summary
     
     Returns a formatted text summary of memories. If query is provided,
     searches for relevant memories. Otherwise returns recent memories.
@@ -262,34 +241,27 @@ async def get_memory_context(
     For structured memory data, use search_memories instead.
     """
     try:
-        # Use default user_id if not provided
-        if user_id is None:
-            if DEFAULT_USER_ID is None:
-                return ""
-            user_id = DEFAULT_USER_ID
-        
         if ctx:
-            ctx.info(f"Getting memory context for user {user_id}")
+            ctx.info("Getting memory context")
         
         if query:
             # Search for relevant memories
             results = await search_memories(
                 query=query,
-                user_id=user_id,
                 top_k=10,
                 ctx=ctx
             )
             memories = results.get("memories", [])
         else:
             # Get recent memories
-            user_metadata = load_memory_metadata(user_id)
+            metadata_obj = load_memory_metadata()
             memories = [
                 {
                     "content": m["content"],
                     "timestamp": m["timestamp"],
                     "memory_type": m.get("memory_type", "general")
                 }
-                for m in user_metadata["memories"][-10:]
+                for m in metadata_obj["memories"][-10:]
             ]
         
         # Build context string
@@ -316,44 +288,37 @@ async def get_memory_context(
 
 @mcp.tool()
 async def consolidate_memories(
-    user_id: Optional[str] = None,
     strategy: str = "deduplicate",
     ctx: Context = None
 ) -> Dict:
-    """Consolidate and optimize user memories"""
+    """Consolidate and optimize memories"""
     try:
-        # Use default user_id if not provided
-        if user_id is None:
-            if DEFAULT_USER_ID is None:
-                return {"success": False, "error": "No user_id provided and no default USER_ID set"}
-            user_id = DEFAULT_USER_ID
-        
         if ctx:
-            ctx.info(f"Consolidating memories for user {user_id} with strategy {strategy}")
+            ctx.info(f"Consolidating memories with strategy {strategy}")
         
-        user_metadata = load_memory_metadata(user_id)
-        original_count = len(user_metadata["memories"])
+        metadata_obj = load_memory_metadata()
+        original_count = len(metadata_obj["memories"])
         
         if strategy == "deduplicate":
             # Remove duplicate memories based on content similarity
             seen_content = set()
             unique_memories = []
             
-            for memory in user_metadata["memories"]:
+            for memory in metadata_obj["memories"]:
                 # Simple deduplication based on exact content match
                 content_key = memory["content"].strip().lower()
                 if content_key not in seen_content:
                     seen_content.add(content_key)
                     unique_memories.append(memory)
             
-            user_metadata["memories"] = unique_memories
+            metadata_obj["memories"] = unique_memories
         
         elif strategy == "compress":
             # Group similar memories together
             # This is a simplified version - could use embeddings for better grouping
             grouped_memories = {}
             
-            for memory in user_metadata["memories"]:
+            for memory in metadata_obj["memories"]:
                 mem_type = memory.get("memory_type", "general")
                 if mem_type not in grouped_memories:
                     grouped_memories[mem_type] = []
@@ -366,25 +331,26 @@ async def consolidate_memories(
                 memories.sort(key=lambda m: m["timestamp"], reverse=True)
                 compressed_memories.extend(memories[:100])  # Keep max 100 per type
             
-            user_metadata["memories"] = compressed_memories
+            metadata_obj["memories"] = compressed_memories
         
         # Re-encode memories
-        if user_metadata["memories"]:
-            encoder = get_or_create_encoder(user_id)
-            video_path, index_path = get_memory_paths(user_id)
+        if metadata_obj["memories"]:
+            encoder = get_or_create_encoder()
+            video_path, index_path = get_memory_paths()
             
             encoder.clear()
-            for memory in user_metadata["memories"]:
+            for memory in metadata_obj["memories"]:
                 encoder.add_text(memory["content"])
             encoder.build_video(video_path, index_path)
             
             # Update retriever
-            retrievers[user_id] = MemvidRetriever(video_path, index_path)
+            global retriever
+            retriever = MemvidRetriever(video_path, index_path)
         
         # Save updated metadata
-        save_memory_metadata(user_id, user_metadata)
+        save_memory_metadata(metadata_obj)
         
-        final_count = len(user_metadata["memories"])
+        final_count = len(metadata_obj["memories"])
         
         return {
             "success": True,
@@ -399,16 +365,15 @@ async def consolidate_memories(
         return {"success": False, "error": str(e)}
 
 
-@mcp.resource("memory://stats/{user_id}")
-async def get_memory_stats(user_id: str) -> Dict:
-    """Get memory statistics for a user"""
+@mcp.resource("memory://stats")
+async def get_memory_stats() -> Dict:
+    """Get memory statistics"""
     try:
-        video_path, index_path = get_memory_paths(user_id)
-        user_metadata = load_memory_metadata(user_id)
+        video_path, index_path = get_memory_paths()
+        metadata_obj = load_memory_metadata()
         
         stats = {
-            "user_id": user_id,
-            "chunk_count": len(user_metadata["memories"]),
+            "chunk_count": len(metadata_obj["memories"]),
             "video_exists": os.path.exists(video_path),
             "index_exists": os.path.exists(index_path)
         }
@@ -417,7 +382,7 @@ async def get_memory_stats(user_id: str) -> Dict:
             stats["video_size_mb"] = os.path.getsize(video_path) / (1024 * 1024)
             
             # Calculate compression ratio
-            total_text_size = sum(len(m["content"]) for m in user_metadata["memories"])
+            total_text_size = sum(len(m["content"]) for m in metadata_obj["memories"])
             if total_text_size > 0:
                 stats["compression_ratio"] = total_text_size / os.path.getsize(video_path)
             else:
@@ -425,7 +390,7 @@ async def get_memory_stats(user_id: str) -> Dict:
         
         # Memory type breakdown
         memory_types = {}
-        for memory in user_metadata["memories"]:
+        for memory in metadata_obj["memories"]:
             mem_type = memory.get("memory_type", "general")
             memory_types[mem_type] = memory_types.get(mem_type, 0) + 1
         stats["memory_types"] = memory_types
@@ -433,7 +398,6 @@ async def get_memory_stats(user_id: str) -> Dict:
         return stats
     except Exception as e:
         return {
-            "user_id": user_id,
             "error": str(e)
         }
 

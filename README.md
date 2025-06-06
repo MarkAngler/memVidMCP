@@ -3,7 +3,6 @@
       "args": ["run", "memvid-mcp"],
       "cwd": "./memories",
       "env": {
-        "MEMORY_PATH": "./memories",
-        "USER_ID": "default"
+        "MEMORY_PATH": "./memories"
       }
     }
